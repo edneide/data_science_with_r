@@ -32,6 +32,9 @@ library(kableExtra)
 library(knitr)
 library(gridExtra)
 library(summarytools)
+library(randomForest)
+library(reshape2)
+library(tidymodels)
 ```
 
 # Data Collection
@@ -551,8 +554,6 @@ correlation_matrix <- df_cleaned %>%
 -   Visualization:
 
 ```{r}
-library(reshape2)
-
 melted_correlation <- melt(correlation_matrix)
 
 matrix_correlation_plot <- ggplot(melted_correlation, aes(x = Var1, y = Var2, fill = value)) +
@@ -571,3 +572,190 @@ ggsave("matrix_correlation_plot.jpg", matrix_correlation_plot,
 ```
 
 There is no strong correlation among numerical variables.
+
+# Data Preparation 
+
+-   **Frequency** encoding for `policy_sales_channel` \| ***Build Function ✅***
+
+-   **Target encoding** for `gender` e `region_code` \| ***Build Function ✅***
+
+## Target encoding
+
+```{r}
+# For gender
+gender_encoder <- df_cleaned %>% 
+  mutate(response_num = ifelse(response == "yes", 1, 0)) %>% 
+  group_by(gender) %>% 
+  summarise(gender_num = mean(response_num, na.rm = TRUE))
+  
+# For region_code  
+region_encoder <- df_cleaned %>% 
+  mutate(response_num = ifelse(response == "yes", 1, 0)) %>% 
+  group_by(region_code) %>% 
+  summarise(region_num = mean(response_num, na.rm = TRUE))
+
+# Save in rds
+saveRDS(gender_encoder, "gender_encoder.rds")
+saveRDS(region_encoder, "region_encoder.rds")
+```
+
+## **Frequency encoding**
+
+```{r}
+policy_encoder <- df_cleaned %>% 
+  group_by(policy_sales_channel) %>% 
+  summarise(policy_num = n()/nrow(df_cleaned))
+
+# Save in rds
+saveRDS(policy_encoder, "policy_encoder.rds")
+```
+
+-   Using the created encoders in our dataset:
+
+    ```{r}
+    # Create function
+    encoder_function <- function(df){
+      df %>% 
+      left_join(gender_encoder) %>% 
+      select(-gender) %>% 
+      rename(gender = gender_num) %>% 
+      left_join(region_encoder) %>% 
+      select(-region_code) %>% 
+      rename(region_code = region_num) %>% 
+      left_join(policy_encoder) %>% 
+      select(-policy_sales_channel) %>% 
+      rename(policy_sales_channel = policy_num) 
+    }
+    ```
+
+    ```{r}
+    # Save function in rds
+    saveRDS(encoder_function, "encoder_function.rds")
+    ```
+
+    ## Splitting into train and test datasets 
+
+    ```{r}
+    encoder_function <- readRDS("encoder_function.rds")
+
+    df_preprocessed <- encoder_function(df_cleaned)
+    ```
+
+    ```{r}
+    set.seed(123)
+
+    df_split <- df_preprocessed %>% 
+      initial_split(prop = 0.75, strata = response)
+
+    df_train <- df_split %>% 
+      training()
+
+    df_test <- df_split %>% 
+      testing()
+    ```
+
+-   Check response proportions:
+
+    ```{r}
+    df_train %>% 
+      select(response) %>% 
+      tbl_summary(type = list(response ~ "categorical"))
+
+
+    df_test %>% 
+      select(response) %>% 
+      tbl_summary(type = list(response ~ "categorical"))
+    ```
+
+-   Using tidymodels steps to continue the preprocessing:
+
+```{r}
+df_recipe <- recipe(response ~.,
+       data = df_train) %>% 
+  step_normalize(age, days_associated) %>% 
+  step_scale(health_annual_paid) %>% 
+  step_dummy(all_nominal(), -all_outcomes())
+```
+
+-   Applying the recipe:
+
+```{r}
+# Train the recipe
+df_train_prep <- df_recipe %>% 
+  prep(training = df_train)
+
+df_train_processed <- df_train_prep %>% 
+  bake(new_data = df_train) 
+```
+
+```{r}
+# For the test dataset 
+df_test_processed <- df_train_prep %>% 
+  bake(new_data = df_test) 
+```
+
+# Feature selection
+
+```{r}
+predictors <- df_train_processed %>% 
+  select(-id, -response)
+
+target <- df_train_processed$response
+
+# Check raw numbers
+length(target)
+nrow(predictors) 
+```
+
+```{r}
+start_time <- Sys.time()
+
+rf_model <- randomForest(predictors, target, ntree = 10,
+                         importance = TRUE)
+
+end_time <- Sys.time()
+
+print(end_time - start_time)
+```
+
+-   Show results:
+
+```{r}
+importance(rf_model) %>% View()
+```
+
+```{r}
+varImpPlot(rf_model)
+```
+
+In this first cycle we are going to select the seven most important variables according to the Mean Decrease Gini:
+
+```{r}
+importance(rf_model) %>% 
+  as_tibble(rownames = "rowname") %>% 
+  arrange(desc(MeanDecreaseGini)) %>% 
+  select(rowname) %>% 
+  slice(1:7) %>% 
+  pull()
+```
+
+```{r}
+selected_columns <- c(
+  "age",
+  "vehicle_damage",
+  "days_associated",
+  "previously_insured",
+  "health_annual_paid", 
+  "policy_sales_channel", 
+  "region_code",
+  "response"
+)
+```
+
+```{r}
+# Final dataset
+df_selected <- df_cleaned %>% 
+  select(all_of(selected_columns)) %>% names()
+
+saveRDS(df_selected, "df_selected.rds")
+```
