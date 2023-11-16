@@ -573,7 +573,7 @@ ggsave("matrix_correlation_plot.jpg", matrix_correlation_plot,
 
 There is no strong correlation among numerical variables.
 
-# Data Preparation 
+# Data Preparation
 
 -   **Frequency** encoding for `policy_sales_channel` \| ***Build Function ✅***
 
@@ -633,7 +633,7 @@ saveRDS(policy_encoder, "policy_encoder.rds")
     saveRDS(encoder_function, "encoder_function.rds")
     ```
 
-    ## Splitting into train and test datasets 
+    ## Splitting into train and test datasets
 
     ```{r}
     encoder_function <- readRDS("encoder_function.rds")

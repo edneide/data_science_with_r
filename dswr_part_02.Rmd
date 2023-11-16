@@ -1,0 +1,399 @@
+---
+title: "Data Science With R - Part 02"
+author: "Edneide Ramalho"
+date: "`r format(Sys.time(), '%d/%m/%Y')`"
+output: 
+    html_document:
+      highlight: textmate
+      logo: logo.png
+      theme: jou
+      number_sections: yes
+      toc: yes
+      toc_float:
+        collapsed: yes
+        smooth_scroll: no
+      df_print: paged
+      code_folding: hide
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+```
+
+# Imports
+
+```{r}
+library(tidyverse)
+library(janitor)
+library(readr)
+library(gtsummary)
+library(summarytools)
+library(kableExtra)
+library(knitr)
+library(gridExtra)
+library(summarytools)
+library(randomForest)
+library(reshape2)
+library(tidymodels)
+```
+
+# Helper Functions
+
+```{r functions}
+# Top @K precision and recall function ---------
+metrics_at_k_function <- function(model_results, k){
+  df_results <- model_results %>% 
+  arrange(desc(.pred_yes)) %>% 
+  mutate(
+    TP = ifelse(.pred_class == "yes" & response == "yes", 1, 0),
+    FP = ifelse(.pred_class == "yes" & response == "no", 1, 0),
+    FN = ifelse(.pred_class == "no" & response == "yes", 1, 0),
+    TN = ifelse(.pred_class == "no" & response == "no", 1, 0)
+  ) 
+  
+  # Create list for precision and recall
+  precision_at_k <- list()
+  recall_at_k <- list()
+
+  # Populate the metric list
+  for (i in 1:k) {
+    subset_k <- df_results %>% 
+    dplyr_row_slice(1:i)
+    
+    precision_at_k[[i]] <- (subset_k$TP %>% sum())/(subset_k$TP %>% sum() + subset_k$FP %>% sum())
+  
+    recall_at_k[[i]] <- (subset_k$TP %>% sum())/(subset_k$TP %>% sum() + subset_k$FN %>% sum())
+}
+
+    metrics_at_k <- df_results %>% 
+  dplyr_row_slice(1:k) %>% 
+  mutate(
+    precision_at_k = unlist(precision_at_k),
+    recall_at_k = unlist(recall_at_k)
+  )
+    
+ return(metrics_at_k)
+}
+
+# Final metrics @K Function ----------------------
+final_metrics_at_k <- function(model_results, k){
+  
+  model_metrics_at_k <- metrics_at_k_function(model_results, k)
+
+  model_metrics_at_k %>% 
+    slice(k) %>% 
+    select(precision_at_k, recall_at_k)
+}
+```
+
+# Data
+
+```{r}
+df <- readRDS("df_cleaned.rds")
+
+selected_columns <- c(
+  "id", 
+  "age",
+  "vehicle_damage",
+  "days_associated",
+  "previously_insured",
+  "health_annual_paid", 
+  "policy_sales_channel", 
+  "region_code",
+  "response"
+)
+
+# Final dataset
+df_selected <- df %>% 
+  select(all_of(selected_columns)) 
+
+saveRDS(df_selected, "df_selected.rds")
+```
+
+# Pre-processing
+
+```{r}
+region_encoder <- readRDS("region_encoder.rds")
+policy_encoder <- readRDS("policy_encoder.rds")
+
+# Create function
+encoder_function <- function(df){
+  df %>% 
+  left_join(region_encoder) %>% 
+  select(-region_code) %>% 
+  rename(region_code = region_num) %>% 
+  left_join(policy_encoder) %>% 
+  select(-policy_sales_channel) %>% 
+  rename(policy_sales_channel = policy_num) 
+}
+```
+
+```{r}
+df_selected <- encoder_function(df_selected)
+```
+
+## Split into train and test datasets
+
+```{r}
+set.seed(123)
+
+df_split <- df_selected %>% 
+  initial_split(prop = 0.80, strata = response)
+
+df_train <- df_split %>% 
+  training()
+
+df_test <- df_split %>% 
+  testing()
+
+# Taking a look on the datasets
+df_train
+df_test
+```
+
+## Applying steps
+
+```{r}
+df_recipe <- recipe(response ~ .,
+       data = df_train %>% select(-id)) %>% 
+  step_normalize(age, days_associated) %>% 
+  step_scale(health_annual_paid) %>% 
+  step_dummy(all_nominal(), -all_outcomes())
+```
+
+```{r}
+# Train the recipe
+df_prep <- df_recipe %>% 
+  prep(training = df_train)
+
+df_train_preprocessed <- df_prep %>% 
+  bake(new_data = df_train)
+
+df_test_preprocessed <- df_prep %>% 
+  bake(new_data = df_test)
+```
+
+# 💻 Logistic Regression
+
+```{r}
+# Model Specification -----------
+logistic_model <- logistic_reg() %>% 
+  set_engine('glm') %>% 
+  set_mode('classification')
+```
+
+```{r}
+# Model Fitting -----------
+start_time <- Sys.time()
+
+logistic_fit <- logistic_model %>% 
+  fit(response ~., 
+      data = df_train_preprocessed)
+
+end_time <- Sys.time()
+
+print(end_time - start_time)
+```
+
+```{r}
+# Prediction ----------
+class_preds <- logistic_fit %>% 
+  predict(new_data = df_test_preprocessed,
+          type = 'class')
+
+prob_preds <- logistic_fit %>% 
+  predict(new_data = df_test_preprocessed,
+          type = 'prob')
+```
+
+```{r}
+# Combine results -----------
+lr_results <- df_test %>% 
+  select(id, response) %>% 
+  bind_cols(class_preds, prob_preds)
+```
+
+```{r}
+# Confusion Matrix ------------
+confusion_matrix_lr <-  conf_mat(
+  lr_results, truth = response, estimate = .pred_class
+)
+```
+
+```{r}
+# Calculating metrics @K
+lr_final_at_k_metrics <- tibble(
+  model = "Logistic Regression"
+) %>% 
+  bind_cols(final_metrics_at_k(lr_results, 2000))
+
+lr_final_at_k_metrics
+```
+
+## Gain & Lift Curves
+
+```{r}
+# Gain curve
+gain_curve(lr_results, response, .pred_yes) %>% 
+  autoplot()
+```
+
+```{r}
+# Lift curve
+lift_curve(lr_results, response, .pred_yes) %>% 
+  autoplot()
+```
+
+Gain: By approaching 25% of the ordered list , \~ 60% of all interested clients are reached.
+
+Lift: By approaching 25% of the ordered list , the model performed \~2.3 times better than a random list.
+
+# Decision Tree 💻
+
+Time to fit the model: 1.065924 secs.
+
+```{r}
+# Model Specification -----------
+dt_model <- decision_tree(tree_depth = 10) %>% 
+  set_engine('rpart') %>% 
+  set_mode('classification')
+
+# Model Fitting -----------
+start_time <- Sys.time()
+
+dt_fit <- dt_model %>% 
+  fit(response ~., 
+      data = df_train_preprocessed)
+
+end_time <- Sys.time()
+
+print(end_time - start_time)
+
+```
+
+```{r}
+# Prediction ----------
+class_preds <- dt_fit %>% 
+  predict(new_data = df_test_preprocessed,
+          type = 'class')
+
+prob_preds <- dt_fit %>% 
+  predict(new_data = df_test_preprocessed,
+          type = 'prob')
+
+# Combine results -----------
+dt_results <- df_test %>% 
+  select(id, response) %>% 
+  bind_cols(class_preds, prob_preds)
+
+# Confusion Matrix ------------
+confusion_matrix_dt <-  conf_mat(
+  dt_results, truth = response, estimate = .pred_class
+)
+```
+
+```{r}
+# Calculating metrics @K
+dt_final_at_k_metrics <- tibble(
+  model = "Decision tree"
+) %>% 
+  bind_cols(final_metrics_at_k(dt_results, 2000))
+
+dt_final_at_k_metrics
+```
+
+```{r}
+# Gain and Lift Curves
+gain_curve(dt_results, response, .pred_yes) %>% 
+  autoplot()
+
+lift_curve(dt_results, response, .pred_yes) %>% 
+  autoplot()
+```
+
+```{r}
+dt_results %>% 
+  select(.pred_yes, .pred_no) %>% 
+  summary()
+```
+
+As the probabilities are constant throughout the rows there is no way to calculate gain and lift. So, this is not a good model to rank our clients.
+
+# Random Forest 💻
+
+Time to run the model: 8.450113 mins
+
+```{r}
+# Model Specification -----------
+rf_model <- rand_forest(
+  mtry = 3,
+  trees = 1000,
+  min_n = 100
+  ) %>% 
+  set_engine('ranger') %>% 
+  set_mode('classification')
+
+# Model Fitting -----------
+start_time <- Sys.time()
+
+rf_fit <- rf_model %>% 
+  fit(response ~., 
+      data = df_train_preprocessed)
+
+end_time <- Sys.time()
+
+print(end_time - start_time)
+```
+
+```{r}
+# Prediction ----------
+class_preds <- rf_fit %>% 
+  predict(new_data = df_test_preprocessed,
+          type = 'class')
+
+prob_preds <- rf_fit %>% 
+  predict(new_data = df_test_preprocessed,
+          type = 'prob')
+
+# Combine results -----------
+rf_results <- df_test %>% 
+  select(id, response) %>% 
+  bind_cols(class_preds, prob_preds)
+
+# Confusion Matrix ------------
+confusion_matrix_rf <-  conf_mat(
+  rf_results, truth = response, estimate = .pred_class
+)
+```
+
+```{r}
+# Calculating metrics @K
+rf_final_at_k_metrics <- tibble(
+  model = "Random Forest"
+) %>% 
+  bind_cols(final_metrics_at_k(rf_results, 2000))
+
+rf_final_at_k_metrics
+```
+
+```{r}
+# Gain and Lift Curves
+gain_curve(rf_results, response, .pred_yes) %>% 
+  autoplot()
+
+lift_curve(rf_results, response, .pred_yes) %>% 
+  autoplot()
+```
+
+Gain: By approaching 25% of the ordered list , \~ 64% of all interested clients are reached.
+
+Lift: By approaching 25% of the ordered list , the model performed \~2.3 times better than a random list.
+
+# Model Comparison
+
+```{r}
+rf_final_at_k_metrics %>% 
+  bind_rows(dt_final_at_k_metrics, lr_final_at_k_metrics) %>% 
+  arrange(desc(recall_at_k))
+
+```
