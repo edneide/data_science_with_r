@@ -182,7 +182,7 @@ logistic_model <- logistic_reg() %>%
   set_mode('classification')
 ```
 
-```{r}
+```{r, eval=FALSE}
 # Model Fitting -----------
 start_time <- Sys.time()
 
@@ -193,9 +193,13 @@ logistic_fit <- logistic_model %>%
 end_time <- Sys.time()
 
 print(end_time - start_time)
+
+saveRDS(logistic_fit, "logistic_fit.rds")
 ```
 
 ```{r}
+logistic_fit <- readRDS("logistic_fit.rds")
+
 # Prediction ----------
 class_preds <- logistic_fit %>% 
   predict(new_data = df_test_preprocessed,
@@ -204,16 +208,12 @@ class_preds <- logistic_fit %>%
 prob_preds <- logistic_fit %>% 
   predict(new_data = df_test_preprocessed,
           type = 'prob')
-```
 
-```{r}
 # Combine results -----------
 lr_results <- df_test %>% 
   select(id, response) %>% 
   bind_cols(class_preds, prob_preds)
-```
 
-```{r}
 # Confusion Matrix ------------
 confusion_matrix_lr <-  conf_mat(
   lr_results, truth = response, estimate = .pred_class
@@ -389,11 +389,87 @@ Gain: By approaching 25% of the ordered list , \~ 64% of all interested clients 
 
 Lift: By approaching 25% of the ordered list , the model performed \~2.3 times better than a random list.
 
+# XGBosst 💻
+
+Time to train the model: 5.701178 mins.
+
+```{r}
+# Model Specification -----------
+xgb_model <- boost_tree(
+  mtry = 6,
+  trees = 1000,
+  min_n = 28,
+  tree_depth = 14,
+  loss_reduction = 0.01,
+  sample_size = 0.27,
+  ) %>% 
+  set_engine('xgboost') %>% 
+  set_mode('classification')
+
+# Model Fitting -----------
+start_time <- Sys.time()
+
+xgb_fit <- xgb_model %>% 
+  fit(response ~., 
+      data = df_train_preprocessed)
+
+end_time <- Sys.time()
+
+print(end_time - start_time)
+```
+
+```{r}
+# Prediction ----------
+class_preds <- xgb_fit %>% 
+  predict(new_data = df_test_preprocessed,
+          type = 'class')
+
+prob_preds <- xgb_fit %>% 
+  predict(new_data = df_test_preprocessed,
+          type = 'prob')
+
+# Combine results -----------
+xgb_results <- df_test %>% 
+  select(id, response) %>% 
+  bind_cols(class_preds, prob_preds)
+
+# Confusion Matrix ------------
+confusion_matrix_xgb <-  conf_mat(
+  xgb_results, truth = response, estimate = .pred_class
+)
+```
+
+```{r}
+# Calculating metrics @K
+xgb_final_at_k_metrics <- tibble(
+  model = "XGBoost"
+) %>% 
+  bind_cols(final_metrics_at_k(xgb_results, 2000))
+
+xgb_final_at_k_metrics
+```
+
+```{r}
+# Gain and Lift Curves
+gain_curve(xgb_results, response, .pred_yes) %>% 
+  autoplot()
+
+lift_curve(xgb_results, response, .pred_yes) %>% 
+  autoplot()
+```
+
+Gain: By approaching 25% of the ordered list, \~ 62% of all interested clients are reached.
+
+Lift: By approaching 25% of the ordered list, the model performed \~2.4 times better than a random list.
+
 # Model Comparison
 
 ```{r}
 rf_final_at_k_metrics %>% 
-  bind_rows(dt_final_at_k_metrics, lr_final_at_k_metrics) %>% 
+  bind_rows(dt_final_at_k_metrics, lr_final_at_k_metrics,
+            xgb_final_at_k_metrics) %>% 
   arrange(desc(recall_at_k))
 
 ```
+
+# 
