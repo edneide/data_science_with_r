@@ -175,7 +175,7 @@ df_test_preprocessed <- df_prep %>%
 
 # 💻 Logistic Regression
 
-```{r}
+```{r logistic_regression}
 # Model Specification -----------
 logistic_model <- logistic_reg() %>% 
   set_engine('glm') %>% 
@@ -252,7 +252,7 @@ Lift: By approaching 25% of the ordered list , the model performed \~2.3 times b
 
 Time to fit the model: 1.065924 secs.
 
-```{r}
+```{r, eval=FALSE}
 # Model Specification -----------
 dt_model <- decision_tree(tree_depth = 10) %>% 
   set_engine('rpart') %>% 
@@ -269,9 +269,13 @@ end_time <- Sys.time()
 
 print(end_time - start_time)
 
+saveRDS(dt_fit, "dt_fit.rds")
+
 ```
 
 ```{r}
+dt_fit <- readRDS("dt_fit.rds")
+
 # Prediction ----------
 class_preds <- dt_fit %>% 
   predict(new_data = df_test_preprocessed,
@@ -323,7 +327,7 @@ As the probabilities are constant throughout the rows there is no way to calcula
 
 Time to run the model: 8.450113 mins
 
-```{r}
+```{r, eval=FALSE}
 # Model Specification -----------
 rf_model <- rand_forest(
   mtry = 3,
@@ -343,9 +347,13 @@ rf_fit <- rf_model %>%
 end_time <- Sys.time()
 
 print(end_time - start_time)
+
+saveRDS(rf_fit, "rf_fit.rds")
 ```
 
 ```{r}
+rf_fit <- readRDS("rf_fit.rds")
+
 # Prediction ----------
 class_preds <- rf_fit %>% 
   predict(new_data = df_test_preprocessed,
@@ -389,11 +397,11 @@ Gain: By approaching 25% of the ordered list , \~ 64% of all interested clients 
 
 Lift: By approaching 25% of the ordered list , the model performed \~2.3 times better than a random list.
 
-# XGBosst 💻
+# XGBoost 💻
 
 Time to train the model: 5.701178 mins.
 
-```{r}
+```{r, eval=FALSE}
 # Model Specification -----------
 xgb_model <- boost_tree(
   mtry = 6,
@@ -416,9 +424,13 @@ xgb_fit <- xgb_model %>%
 end_time <- Sys.time()
 
 print(end_time - start_time)
+
+saveRDS(xgb_fit, "xgb_fit.rds")
 ```
 
 ```{r}
+xgb_fit <- readRDS("xgb_fit.rds")
+
 # Prediction ----------
 class_preds <- xgb_fit %>% 
   predict(new_data = df_test_preprocessed,
@@ -462,14 +474,97 @@ Gain: By approaching 25% of the ordered list, \~ 62% of all interested clients a
 
 Lift: By approaching 25% of the ordered list, the model performed \~2.4 times better than a random list.
 
+# KNN 💻
+
+Time to train the model: 19.01394 mins
+
+Time for prediction: 9.316501 mins
+
+```{r, eval=FALSE}
+library(kknn)
+
+# Model Specification -----------
+knn_model <- nearest_neighbor(weight_func = "rectangular",
+                              neighbors = 3) %>% 
+  set_engine('kknn') %>% 
+  set_mode('classification')
+
+# Model Fitting -----------
+start_time <- Sys.time()
+
+knn_fit <- knn_model %>% 
+  fit(response ~., 
+      data = df_train_preprocessed)
+
+end_time <- Sys.time()
+
+print(end_time - start_time)
+
+saveRDS(knn_fit, "knn_fit.rds")
+```
+
+```{r, eval=FALSE}
+knn_fit <- readRDS("knn_fit.rds")
+
+start_time <- Sys.time()
+# Prediction ----------
+class_preds <- knn_fit %>% 
+  predict(new_data = df_test_preprocessed,
+          type = 'class')
+
+prob_preds <- knn_fit %>% 
+  predict(new_data = df_test_preprocessed,
+          type = 'prob')
+end_time <- Sys.time()
+
+print(end_time - start_time)
+
+# Combine results -----------
+knn_results <- df_test %>% 
+  select(id, response) %>% 
+  bind_cols(class_preds, prob_preds)
+
+saveRDS(knn_results, "knn_results.rds") 
+```
+
+```{r}
+knn_results <- readRDS("knn_results.rds")
+
+# Confusion Matrix ------------
+confusion_matrix_knn <-  conf_mat(
+  knn_results, truth = response, estimate = .pred_class
+)
+
+# Calculating metrics @K
+knn_final_at_k_metrics <- tibble(
+  model = "KNN"
+) %>% 
+  bind_cols(final_metrics_at_k(knn_results, 2000))
+
+knn_final_at_k_metrics
+```
+
+```{r}
+# Gain and Lift Curves
+gain_curve(knn_results, response, .pred_yes) %>% 
+  autoplot()
+
+lift_curve(knn_results, response, .pred_yes) %>% 
+  autoplot()
+```
+
+Gain: By approaching 25% of the ordered list, \~ 62% of all interested clients are reached.
+
+Lift: By approaching 25% of the ordered list, the model performed \~2.2 times better than a random list.
+
 # Model Comparison
 
 ```{r}
 rf_final_at_k_metrics %>% 
-  bind_rows(dt_final_at_k_metrics, lr_final_at_k_metrics,
-            xgb_final_at_k_metrics) %>% 
+  bind_rows(dt_final_at_k_metrics, 
+            lr_final_at_k_metrics,
+            xgb_final_at_k_metrics,
+            knn_final_at_k_metrics) %>% 
   arrange(desc(recall_at_k))
 
 ```
-
-# 
