@@ -368,15 +368,115 @@ Gain:By approaching 25% of the ordered list, \~ 62% of all interested clients ar
 
 Lift: By approaching 25% of the ordered list, the model performs \~ 2.6 times better than the random list.
 
+# Random Forest 💻
 
+```{r}
+# Model specification ----------------
+rf_model <- rand_forest(
+  mtry = tune(),
+  min_n = tune(),
+  trees = 100
+) %>% 
+  set_engine('ranger') %>% 
+  set_mode('classification')
+
+hardhat::extract_parameter_set_dials(rf_model)
+
+# Creating the grid
+rf_grid <- grid_regular(
+  mtry(range = c(10, 300)),
+  min_n(range = c(100, 1000)),
+  levels = 3
+  )
+```
+
+```{r, eval = FALSE}
+# Tune the model ------------
+doParallel::registerDoParallel()
+start_time <- Sys.time()
+
+rf_tune <- tune_grid(
+  rf_model, df_recipe,
+  resamples = df_kfolds,
+  grid = rf_grid
+)
+
+end_time <- Sys.time()
+
+print(end_time - start_time )
+saveRDS(rf_tune, "rf_tune.rds")
+```
+
+```{r}
+rf_tune <- readRDS("rf_tune.rds")
+
+# Select the best hyperparameters ---------------
+rf_param <- rf_tune %>% 
+  select_best("roc_auc")
+
+# Apply the best hyperparameters to the model ----------
+tidy_rf_model <- finalize_model(rf_model, rf_param)
+
+# Create workflow ---------------
+rf_wkfl <- workflow() %>% 
+  add_model(tidy_rf_model) %>% 
+  add_recipe(df_recipe)
+```
+
+```{r, eval=FALSE}
+# Train final model -----------------
+doParallel::registerDoParallel()
+start_time <- Sys.time()
+
+rf_res <- last_fit(rf_wkfl, df_split)
+
+end_time <- Sys.time()
+
+print(end_time - start_time)
+
+saveRDS(rf_res, "rf_res.rds")
+```
+
+```{r}
+# Confusion matrix -----------------
+rf_res <- readRDS("rf_res.rds")
+
+rf_conf_mat <- rf_res %>% 
+  unnest(.predictions) %>% 
+  conf_mat(truth = response, estimate = .pred_class)
+
+# Results - data frame ---------
+rf_results <- rf_res %>% 
+  unnest(.predictions) %>% 
+  select(.pred_yes:response)
+
+# Metrics @K -------------------
+rf_metrics_at_k <- final_metrics_at_k(rf_results, 2000)
+rf_metrics_at_k <- tibble(model = "Random Forest") %>% 
+  bind_cols(rf_metrics_at_k)
+rf_metrics_at_k
+
+# Gain and Lift Curves --------------------
+gain_curve(rf_results, response, .pred_yes) %>% 
+  autoplot()
+
+lift_curve(rf_results, response, .pred_yes) %>% 
+  autoplot()
+```
+
+Gain:By approaching 25% of the ordered list, \~ 62% of all interested clients are reached.
+
+Lift: By approaching 25% of the ordered list, the model performs \~ 2.7 times better than the random list.
 
 
 # Model Comparison
 ```{r}
 models_df <- bind_rows(
   lr_metrics_at_k,
-  tree_metrics_at_k
-)
+  tree_metrics_at_k,
+  rf_metrics_at_k
+) %>% 
+  arrange(desc(recall_at_k))
 models_df
 ```
 
