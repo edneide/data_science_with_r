@@ -267,19 +267,116 @@ lift_curve(lr_results, response, .pred_yes) %>%
   autoplot()
 ```
 
-Gain:By approaching 25% of the ordered list, ~ 61% of all interested clients are reached. 
+Gain:By approaching 25% of the ordered list, \~ 61% of all interested clients are reached.
 
-Lift: By approaching 25% of the ordered list, the model performs ~ 2.3 times better than the random list.  
+Lift: By approaching 25% of the ordered list, the model performs \~ 2.3 times better than the random list.
+
+# Decision Tree 💻
+
+```{r}
+# Model specification ----------------
+tree_model <- decision_tree(
+  cost_complexity = tune(),
+  min_n = tune(),
+  tree_depth = tune()
+) %>% 
+  set_engine('rpart') %>% 
+  set_mode('classification')
+
+hardhat::extract_parameter_set_dials(tree_model)
+
+# Creating the grid
+tree_grid <- grid_regular(extract_parameter_set_dials(tree_model),
+                        levels = 3)
+```
+
+```{r, eval = FALSE}
+# Tune the model ------------
+doParallel::registerDoParallel()
+start_time <- Sys.time()
+
+tree_tune <- tune_grid(
+  tree_model, df_recipe,
+  resamples = df_kfolds,
+  grid = tree_grid
+)
+
+end_time <- Sys.time()
+
+print(end_time - start_time )
+saveRDS(tree_tune, "tree_tune.rds")
+```
+
+```{r}
+tree_tune <- readRDS("tree_tune.rds")
+
+# Select the best hyperparameters ---------------
+tree_param <- tree_tune %>% 
+  select_best("roc_auc")
+
+# Apply the best hyperparameters to the model ----------
+tidy_tree_model <- finalize_model(tree_model, tree_param)
+
+# Create workflow ---------------
+tree_wkfl <- workflow() %>% 
+  add_model(tidy_tree_model) %>% 
+  add_recipe(df_recipe)
+```
+
+```{r, eval=FALSE}
+# Train final model -----------------
+doParallel::registerDoParallel()
+start_time <- Sys.time()
+
+tree_res <- last_fit(tree_wkfl, df_split)
+
+end_time <- Sys.time()
+
+print(end_time - start_time)
+
+saveRDS(tree_res, "tree_res.rds")
+```
+
+```{r}
+# Confusion matrix -----------------
+tree_res <- readRDS("tree_res.rds")
+
+tree_conf_mat <- tree_res %>% 
+  unnest(.predictions) %>% 
+  conf_mat(truth = response, estimate = .pred_class)
+
+# Results - data frame ---------
+tree_results <- tree_res %>% 
+  unnest(.predictions) %>% 
+  select(.pred_yes:response)
+
+# Metrics @K -------------------
+tree_metrics_at_k <- final_metrics_at_k(tree_results, 2000)
+tree_metrics_at_k <- tibble(model = "Decision Tree") %>% 
+  bind_cols(tree_metrics_at_k)
+tree_metrics_at_k
+
+# Gain and Lift Curves --------------------
+gain_curve(tree_results, response, .pred_yes) %>% 
+  autoplot()
+
+lift_curve(tree_results, response, .pred_yes) %>% 
+  autoplot()
+```
+
+Gain:By approaching 25% of the ordered list, \~ 62% of all interested clients are reached.
+
+Lift: By approaching 25% of the ordered list, the model performs \~ 2.6 times better than the random list.
 
 
 
 
-
-
-
-
-
-
-
-
+# Model Comparison
+```{r}
+models_df <- bind_rows(
+  lr_metrics_at_k,
+  tree_metrics_at_k
+)
+models_df
+```
 
