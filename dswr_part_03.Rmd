@@ -469,12 +469,121 @@ Gain:By approaching 25% of the ordered list, \~ 62% of all interested clients ar
 Lift: By approaching 25% of the ordered list, the model performs \~ 2.7 times better than the random list.
 
 
+# XGBoost 💻
+
+```{r}
+# Model specification ----------------
+xgb_model <- boost_tree(
+  trees = 1000,
+  tree_depth = tune(),
+  min_n = tune(),
+  loss_reduction = tune(),
+  sample_size = tune(),
+  mtry = tune(),
+  learn_rate = tune()
+) %>% 
+  set_engine('xgboost') %>% 
+  set_mode('classification')
+
+hardhat::extract_parameter_set_dials(xgb_model)
+
+# Creating the grid
+xgb_grid <- grid_latin_hypercube(
+  tree_depth(),
+  min_n(),
+  loss_reduction(),
+  sample_size = sample_prop(),
+  finalize(mtry(), df_train),
+  learn_rate(),
+  size = 10
+  )
+```
+
+```{r, eval = FALSE}
+# Tune the model ------------
+doParallel::registerDoParallel()
+start_time <- Sys.time()
+
+xgb_tune <- tune_grid(
+  xgb_model, df_recipe,
+  resamples = df_kfolds,
+  grid = xgb_grid
+)
+
+end_time <- Sys.time()
+
+print(end_time - start_time )
+saveRDS(xgb_tune, "xgb_tune.rds")
+```
+
+```{r}
+xgb_tune <- readRDS("xgb_tune.rds")
+
+# Select the best hyperparameters ---------------
+xgb_param <- xgb_tune %>% 
+  select_best("roc_auc")
+
+# Apply the best hyperparameters to the model ----------
+tidy_xgb_model <- finalize_model(xgb_model, xgb_param)
+
+# Create workflow ---------------
+xgb_wkfl <- workflow() %>% 
+  add_model(tidy_xgb_model) %>% 
+  add_recipe(df_recipe)
+```
+
+```{r, eval=FALSE}
+# Train final model -----------------
+doParallel::registerDoParallel()
+start_time <- Sys.time()
+
+xgb_res <- last_fit(xgb_wkfl, df_split)
+
+end_time <- Sys.time()
+
+print(end_time - start_time)
+
+saveRDS(xgb_res, "xgb_res.rds")
+```
+
+```{r}
+# Confusion matrix -----------------
+xgb_res <- readRDS("xgb_res.rds")
+
+xgb_conf_mat <- xgb_res %>% 
+  unnest(.predictions) %>% 
+  conf_mat(truth = response, estimate = .pred_class)
+
+# Results - data frame ---------
+xgb_results <- xgb_res %>% 
+  unnest(.predictions) %>% 
+  select(.pred_yes:response)
+
+# Metrics @K -------------------
+xgb_metrics_at_k <- final_metrics_at_k(xgb_results, 2000)
+xgb_metrics_at_k <- tibble(model = "XGBoost") %>% 
+  bind_cols(xgb_metrics_at_k)
+xgb_metrics_at_k
+
+# Gain and Lift Curves --------------------
+gain_curve(xgb_results, response, .pred_yes) %>% 
+  autoplot()
+
+lift_curve(xgb_results, response, .pred_yes) %>% 
+  autoplot()
+```
+
+Gain:By approaching 25% of the ordered list, \~ 63% of all interested clients are reached.
+
+Lift: By approaching 25% of the ordered list, the model performs \~ 2.8 times better than the random list.
+
 # Model Comparison
 ```{r}
 models_df <- bind_rows(
   lr_metrics_at_k,
   tree_metrics_at_k,
-  rf_metrics_at_k
+  rf_metrics_at_k,
+  xgb_metrics_at_k
 ) %>% 
   arrange(desc(recall_at_k))
 models_df
