@@ -577,15 +577,181 @@ Gain:By approaching 25% of the ordered list, \~ 63% of all interested clients ar
 
 Lift: By approaching 25% of the ordered list, the model performs \~ 2.8 times better than the random list.
 
+# KNN 💻
+
+```{r}
+# Model specification ----------------
+knn_model <- nearest_neighbor(neighbors = tune()) %>% 
+  set_engine("kknn") %>% 
+  set_mode('classification')
+
+hardhat::extract_parameter_set_dials(knn_model)
+
+# Creating the grid
+knn_grid <- grid_regular(
+  extract_parameter_set_dials(knn_model),
+  levels = 10
+)
+```
+
+```{r, eval = FALSE}
+# Tune the model ------------
+doParallel::registerDoParallel()
+start_time <- Sys.time()
+
+knn_tune <- tune_grid(
+  knn_model, df_recipe,
+  resamples = df_kfolds,
+  grid = knn_grid
+)
+
+end_time <- Sys.time()
+
+print(end_time - start_time )
+saveRDS(knn_tune, "knn_tune.rds")
+```
+
+```{r}
+knn_tune <- readRDS("knn_tune.rds")
+
+# Select the best hyperparameters ---------------
+knn_param <- knn_tune %>% 
+  select_best("roc_auc")
+
+# Apply the best hyperparameters to the model ----------
+tidy_knn_model <- finalize_model(knn_model, knn_param)
+
+# Create workflow ---------------
+knn_wkfl <- workflow() %>% 
+  add_model(tidy_knn_model) %>% 
+  add_recipe(df_recipe)
+```
+
+```{r, eval=FALSE}
+# Train final model -----------------
+doParallel::registerDoParallel()
+start_time <- Sys.time()
+
+knn_res <- last_fit(knn_wkfl, df_split)
+
+end_time <- Sys.time()
+
+print(end_time - start_time)
+
+saveRDS(knn_res, "knn_res.rds")
+```
+
+```{r}
+# Confusion matrix -----------------
+knn_res <- readRDS("knn_res.rds")
+
+knn_conf_mat <- knn_res %>% 
+  unnest(.predictions) %>% 
+  conf_mat(truth = response, estimate = .pred_class)
+
+# Results - data frame ---------
+knn_results <- knn_res %>% 
+  unnest(.predictions) %>% 
+  select(.pred_yes:response)
+
+# Metrics @K -------------------
+knn_metrics_at_k <- final_metrics_at_k(knn_results, 2000)
+knn_metrics_at_k <- tibble(model = "KNN") %>% 
+  bind_cols(knn_metrics_at_k)
+knn_metrics_at_k
+
+# Gain and Lift Curves --------------------
+gain_curve(knn_results, response, .pred_yes) %>% 
+  autoplot()
+
+lift_curve(knn_results, response, .pred_yes) %>% 
+  autoplot()
+```
+
+Gain:By approaching 25% of the ordered list, \~ 62.5% of all interested clients are reached.
+
+Lift: By approaching 25% of the ordered list, the model performs \~ 2.5 times better than the random list.
+
+
 # Model Comparison
 ```{r}
 models_df <- bind_rows(
   lr_metrics_at_k,
   tree_metrics_at_k,
   rf_metrics_at_k,
-  xgb_metrics_at_k
+  xgb_metrics_at_k,
+  knn_metrics_at_k
 ) %>% 
   arrange(desc(recall_at_k))
 models_df
 ```
+
+The KNN model was the one that performed better in this cicle. So, it will be selected as our final model to make predictions for new clients. 
+
+# Save final model
+
+```{r, eval=FALSE}
+start_time <- Sys.time()
+doParallel::registerDoParallel()
+
+final_model <- fit(knn_wkfl, df_selected)
+
+end_time <- Sys.time()
+print(end_time - start_time)
+
+saveRDS(final_model, "final_model.rds")
+```
+
+```{r}
+# Read the final model
+model <- readRDS("final_model.rds")
+```
+
+## Make predictions 
+
+```{r}
+model$pre$mold$predictors %>% 
+  colnames() %>% 
+  tibble()
+```
+
+```{r}
+clients <- tibble(
+  "age" = 18,                  
+  "days_associated" = 299,      
+  "health_annual_paid" = 60000,   
+  "region_code" = 28,           
+  "policy_sales_channel" = 100, 
+  "vehicle_damage" = "yes",     
+  "previously_insured" = "no"
+)
+
+# Test for more than one client
+clients2 <- df[1:100,]
+selected <- c("id", names(clients))
+
+clients2 <- clients2 %>% 
+  select(one_of(selected))
+```
+
+```{r}
+predict_one <- predict(model, clients, type = "prob")
+predict_one
+```
+
+```{r}
+predict_clients <- predict(model, 
+                           clients2 %>% select(-id), 
+                           type = "prob")
+
+predict_clients <- clients2 %>% 
+  select(id) %>% 
+  bind_cols(predict_clients) %>% 
+  arrange(desc(.pred_yes))
+```
+
+
+
+
+
 
