@@ -27,11 +27,10 @@ library(tidyverse)
 library(janitor)
 library(readr)
 library(gtsummary)
-library(summarytools)
 library(kableExtra)
 library(knitr)
 library(gridExtra)
-library(summarytools)
+#library(summarytools)
 library(randomForest)
 library(reshape2)
 library(tidymodels)
@@ -738,6 +737,15 @@ clients2 <- clients2 %>%
 predict_one <- predict(model, clients, type = "prob")
 predict_one
 ```
+
+```{r}
+pred_yes <- predict_one %>% 
+  select(.pred_yes) %>% 
+  pull()
+
+pred_yes
+```
+
 
 ```{r}
 predict_clients <- predict(model, 
