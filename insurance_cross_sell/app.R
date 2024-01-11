@@ -80,7 +80,6 @@ ui <- dashboardPage(
 # Server -----------------
 server <- function(input, output) { 
   
-
   
   output$prediction <- renderValueBox({
     
