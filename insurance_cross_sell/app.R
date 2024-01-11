@@ -4,6 +4,7 @@ library(shinydashboard)
 library(tidymodels)
 library(tidyverse)
 library(DT)
+library(kknn)
 
 # Load the model --------
 model <- readRDS("~/Documents/repos/data_science_with_r/final_model.rds")
@@ -121,13 +122,24 @@ server <- function(input, output) {
   
   # Display the selected number of rows in the table
   output$table <- renderDT({
+    result <- predict(model, 
+                      data() %>% select(-id), 
+                      type = "prob")
+    
+    
+    
+    predict_clients <- data() %>% 
+      select(id) %>% 
+      bind_cols(result) %>% 
+      arrange(desc(.pred_yes)) 
+    
     datatable(
-      data()[1:input$numRows, ],
+      predict_clients[1:input$numRows, ],
       extensions = 'Buttons',
       callback = JS('table.page("next").draw(false);'),
       options = list(
         lengthMenu = c(5, 10, 15),
-        pageLength = 5,
+        pageLength = 20,
         dom = 'Bfrtip',
         buttons = c('csv', 'excel')
         
