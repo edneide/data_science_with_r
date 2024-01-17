@@ -9,6 +9,9 @@ library(kknn)
 # Load the model --------
 model <- readRDS("~/Documents/repos/data_science_with_r/final_model.rds")
 
+# Header ----------------
+header <- dashboardHeader(title = "Health Insurance App")
+
 # Sidebar -------------------------
 sidebar <- dashboardSidebar(
   sidebarMenu(
@@ -71,7 +74,7 @@ body <- dashboardBody(
 # UI -----------------------
 ui <- dashboardPage(
   
-  dashboardHeader(title = "Health Insurance App"),
+  header,
   sidebar,
   body
   
