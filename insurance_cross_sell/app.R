@@ -145,7 +145,6 @@ server <- function(input, output) {
         pageLength = 20,
         dom = 'Bfrtip',
         buttons = c('csv', 'excel')
-        
       )
     )
   })
